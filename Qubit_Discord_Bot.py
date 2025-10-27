@@ -371,6 +371,11 @@ async def avatar(ctx, member: discord.Member = None):
 # -----------------------------
 # Help Command
 # -----------------------------
+
+@bot.command()
+async def ping(ctx):
+    await ctx.send("Pong!")
+
 @bot.command(name="help")
 async def help_command(ctx):
     msg = (
@@ -402,3 +407,4 @@ async def help_command(ctx):
 # Run Bot
 # -----------------------------
 bot.run(TOKEN)
+
