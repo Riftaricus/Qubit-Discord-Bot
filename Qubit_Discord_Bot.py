@@ -24,21 +24,21 @@ USERDATA_FILE = "userdata.json"
 
 # Load offenses
 if os.path.exists(OFFENSES_FILE):
-    with open(OFFENSES_FILE, "r") as f:
+    with open(OFFENSES_FILE, "r", encoding="utf-8") as f:
         user_offenses = defaultdict(list, json.load(f))
 else:
     user_offenses = defaultdict(list)
 
 # Load prefixes
 if os.path.exists(PREFIXES_FILE):
-    with open(PREFIXES_FILE, "r") as f:
+    with open(PREFIXES_FILE, "r", encoding="utf-8") as f:
         prefixes = json.load(f)
 else:
     prefixes = {}
 
 # Load user data
 if os.path.exists(USERDATA_FILE):
-    with open(USERDATA_FILE, "r") as f:
+    with open(USERDATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
         user_points = defaultdict(int, {int(k): v["points"] for k, v in data.items()})
         user_xp = defaultdict(int, {int(k): v["xp"] for k, v in data.items()})
@@ -50,8 +50,12 @@ else:
 
 def save_userdata():
     data = {str(k): {"points": user_points[k], "xp": user_xp[k], "level": user_level[k]} for k in user_points}
-    with open(USERDATA_FILE, "w") as f:
+    with open(USERDATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
+
+def save_offenses():
+    with open(OFFENSES_FILE, "w", encoding="utf-8") as f:
+        json.dump(user_offenses, f, indent=4)
 
 # -----------------------------
 # Bot Setup
@@ -64,7 +68,7 @@ def get_prefix(bot, message):
     return prefixes.get(str(message.guild.id), "!")
 
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
-bot.remove_command("help")
+bot.remove_command("help")  # We'll add a custom help command
 
 # -----------------------------
 # Configuration
@@ -73,7 +77,6 @@ illegalWords = ["egg", "exampleword1", "exampleword2"]
 logChannelID = 1429033263699071057
 userWarningChannelID = None
 
-# Auto-moderation thresholds
 WARN_THRESHOLD = 1
 MUTE_THRESHOLD = 4
 MUTE_DURATION = 60*5
@@ -81,20 +84,14 @@ MUTE_ROLE_NAME = "Muted"
 KICK_THRESHOLD = 3
 BAN_THRESHOLD = 5
 
-# Anti-spam
 SPAM_THRESHOLD = 5
 SPAM_INTERVAL = 10
 user_message_times = defaultdict(list)
 
-# Economy and leveling
 XP_PER_MESSAGE = 5
 LEVEL_UP_BASE = 100
 LEVEL_MULTIPLIER = 1.5
 
-# Welcome messages
-welcome_messages = {}
-
-# Reaction roles
 reaction_roles = {
     "👍": "Member",
     "🎮": "Gamer",
@@ -104,10 +101,6 @@ reaction_roles = {
 # -----------------------------
 # Helper Functions
 # -----------------------------
-def save_offenses():
-    with open(OFFENSES_FILE, "w") as f:
-        json.dump(user_offenses, f, indent=4)
-
 def contains_illegal_word(message_content):
     content = re.sub(r"[^\w\s]", "", message_content.lower())
     return any(word.lower() in content for word in illegalWords)
@@ -170,19 +163,6 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
 
 @bot.event
-async def on_member_join(member):
-    channel = member.guild.system_channel
-    msg = welcome_messages.get(member.guild.id)
-    if channel:
-        if msg:
-            await channel.send(msg.replace("{user}", member.mention))
-        else:
-            await channel.send(f"👋 Welcome {member.mention} to {member.guild.name}!")
-    role = discord.utils.get(member.guild.roles, name="Member")
-    if role:
-        await member.add_roles(role)
-
-@bot.event
 async def on_message_edit(before, after):
     if before.author.bot or before.content == after.content:
         return
@@ -201,7 +181,7 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # Anti-spam
+    # Spam check
     now = datetime.utcnow().timestamp()
     times = user_message_times[message.author.id]
     times.append(now)
@@ -211,13 +191,13 @@ async def on_message(message):
         await message.delete()
         return
 
-    # Economy and leveling
+    # Economy & XP
     user_points[message.author.id] += 1
     leveled_up = add_xp(message.author.id)
     if leveled_up:
         await message.channel.send(f"🎉 {message.author.mention} has leveled up to **Level {user_level[message.author.id]}**!")
 
-    # Moderation
+    # Auto-moderation
     if contains_illegal_word(message.content):
         message_link = message.jump_url
         author = message.author
@@ -251,44 +231,56 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-@bot.event
-async def on_raw_reaction_add(payload):
-    guild = bot.get_guild(payload.guild_id)
-    member = guild.get_member(payload.user_id)
-    if member.bot:
-        return
-    role_name = reaction_roles.get(str(payload.emoji))
-    if role_name:
-        role = discord.utils.get(guild.roles, name=role_name)
-        if role:
-            await member.add_roles(role)
-            channel = guild.get_channel(payload.channel_id)
-            await channel.send(f"{member.mention} got the role **{role_name}**!")
-
-@bot.event
-async def on_raw_reaction_remove(payload):
-    guild = bot.get_guild(payload.guild_id)
-    member = guild.get_member(payload.user_id)
-    role_name = reaction_roles.get(str(payload.emoji))
-    if role_name:
-        role = discord.utils.get(guild.roles, name=role_name)
-        if role:
-            await member.remove_roles(role)
-
 # -----------------------------
 # Moderation Commands
 # -----------------------------
 @bot.command()
-async def ping(ctx):
-    await ctx.send("Pong!")
+async def offenses(ctx, member: discord.Member = None):
+    member = member or ctx.author
+    offenses = user_offenses.get(str(member.id), [])
+    await ctx.send(f"⚠️ {member.mention} has **{len(offenses)}** recorded offense(s).")
+
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def offenses_detail(ctx, member: discord.Member):
+    offenses_list = user_offenses.get(str(member.id), [])
+    if not offenses_list:
+        await ctx.send(f"{member.mention} has no recorded offenses.")
+        return
+    msg = f"📜 **Offenses for {member}:**\n"
+    for i, o in enumerate(offenses_list[-10:], start=1):
+        msg += f"{i}. {o['time']} in #{o['channel']} - {o['content']}\n"
+    await ctx.send(msg)
+
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def reset_offenses(ctx, member: discord.Member):
+    if str(member.id) in user_offenses:
+        del user_offenses[str(member.id)]
+        save_offenses()
+        await ctx.send(f"✅ Offenses for {member.mention} have been reset.")
+    else:
+        await ctx.send(f"{member.mention} has no offenses recorded.")
+
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def top_offenders(ctx, limit: int = 5):
+    if not user_offenses:
+        await ctx.send("No offenses recorded yet.")
+        return
+    sorted_users = sorted(user_offenses.items(), key=lambda x: len(x[1]), reverse=True)[:limit]
+    msg = "**🚨 Top Offenders:**\n"
+    for uid, offenses_list in sorted_users:
+        user = ctx.guild.get_member(int(uid))
+        name = user.mention if user else f"User ID {uid}"
+        msg += f"{name} - {len(offenses_list)} offenses\n"
+    await ctx.send(msg)
 
 @bot.command()
 @commands.has_permissions(manage_messages=True)
 async def purge(ctx, amount: int):
     deleted = await ctx.channel.purge(limit=amount)
     log_channel = bot.get_channel(logChannelID)
-
-    # Collect messages data
     lines = []
     for msg in deleted:
         timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -296,7 +288,6 @@ async def purge(ctx, amount: int):
         content = msg.content
         lines.append(f"[{timestamp}] {author}: {content}")
 
-    # Save to txt
     if lines and log_channel:
         filename = f"purge_{ctx.channel.id}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.txt"
         with open(filename, "w", encoding="utf-8") as f:
@@ -326,13 +317,13 @@ async def eightball(ctx, *, question):
 # Economy & Leveling Commands
 # -----------------------------
 @bot.command()
-async def points(ctx, member: commands.MemberConverter = None):
+async def points(ctx, member: discord.Member = None):
     member = member or ctx.author
     pts = user_points.get(member.id, 0)
     await ctx.send(f"{member.mention} has {pts} points.")
 
 @bot.command()
-async def level(ctx, member: commands.MemberConverter = None):
+async def level(ctx, member: discord.Member = None):
     member = member or ctx.author
     lvl = user_level.get(member.id, 0)
     xp = user_xp.get(member.id, 0)
@@ -362,7 +353,7 @@ async def remindme(ctx, time: int, *, message):
 # Info Commands
 # -----------------------------
 @bot.command()
-async def userinfo(ctx, member: commands.MemberConverter = None):
+async def userinfo(ctx, member: discord.Member = None):
     member = member or ctx.author
     roles = ", ".join([r.name for r in member.roles if r.name != "@everyone"])
     await ctx.send(f"**User Info:**\nName: {member}\nID: {member.id}\nJoined: {member.joined_at}\nRoles: {roles}")
@@ -373,9 +364,9 @@ async def serverinfo(ctx):
     await ctx.send(f"**Server Info:**\nName: {guild.name}\nID: {guild.id}\nMembers: {guild.member_count}\nCreated: {guild.created_at}")
 
 @bot.command()
-async def avatar(ctx, member: commands.MemberConverter = None):
+async def avatar(ctx, member: discord.Member = None):
     member = member or ctx.author
-    await ctx.send(f"{member.mention}'s avatar: {member.avatar.url}")
+    await ctx.send(f"{member.mention}'s avatar: {member.display_avatar.url}")
 
 # -----------------------------
 # Help Command
